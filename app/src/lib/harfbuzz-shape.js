@@ -231,7 +231,11 @@ export async function shapeSvgToVectorPaths(svgStr, { hb, getHbFont, fontConfig 
   // nested inside <text> — svg-to-pdfkit ignores non-text children of <text>.)
   async function shapeTextElement(textEl) {
     const anchor = getNodeAttr(textEl, 'text-anchor', 'start');
-    const rtlBase = baseDirection(collectText(textEl)) === 'rtl'; // paragraph direction
+    // Honour the `direction` attribute cleanSVG set (the label's paragraph
+    // direction) so a Latin-led line like "kpi_overall_by_dept لقسمه" shapes in
+    // the same order as its RTL siblings; only re-detect if it's absent.
+    const dirAttr = getNodeAttr(textEl, 'direction', '');
+    const rtlBase = dirAttr ? dirAttr === 'rtl' : baseDirection(collectText(textEl)) === 'rtl';
     const textX = parseFloat(getNodeAttr(textEl, 'x', '')) || 0;
     const textY = parseFloat(getNodeAttr(textEl, 'y', '')) || 0;
     // mermaid puts a baseline `dy` on <text> to vertically centre the line within

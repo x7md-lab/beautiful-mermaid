@@ -65,7 +65,11 @@ function lineWidth(text, font) {
 }
 
 function makeLineText(text, x, y, base) {
-  const dir = baseDirection(text);
+  // Use the label's paragraph direction (set by cleanSVG from the whole <text>)
+  // so every line shares it — recomputing per line would flip a Latin-led line
+  // like "kpi_overall_by_dept لقسمه" out of order. Fall back to the line's own
+  // base direction only when the label had none.
+  const dir = base.direction || baseDirection(text);
   const attrs = {
     x: String(Math.round(x * 100) / 100),
     y: String(Math.round(y * 100) / 100),
@@ -93,7 +97,14 @@ function flattenText(textEl) {
   const family = attr(textEl, 'font-family', 'Vazirmatn, system-ui, sans-serif');
   const fontWeight = attr(textEl, 'font-weight', '');
   const bold = /bold|[6-9]00/.test(fontWeight);
-  const base = { anchor: attr(textEl, 'text-anchor', 'start'), fontSize, family, fontWeight, fill: attr(textEl, 'fill', '') };
+  const base = {
+    anchor: attr(textEl, 'text-anchor', 'start'),
+    fontSize,
+    family,
+    fontWeight,
+    fill: attr(textEl, 'fill', ''),
+    direction: attr(textEl, 'direction', ''), // paragraph direction (shared by all lines)
+  };
   const font = `${bold ? '600 ' : ''}${fontSize}px ${family}`;
 
   const lines = tspans.map((t) => collectText(t)).filter((l) => l.length);
