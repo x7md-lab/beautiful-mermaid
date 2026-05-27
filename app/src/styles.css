@@ -1,0 +1,67 @@
+@import 'tailwindcss';
+
+/* Vazirmatn is bundled and registered at runtime (src/lib/fonts.js). Use it as
+   the UI font so Arabic chrome renders crisply; fall back to system fonts. */
+@layer base {
+  html,
+  body {
+    height: 100%;
+  }
+  body {
+    font-family: 'Vazirmatn', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Mermaid source is code → keep it LTR + monospace even inside the RTL shell. */
+  .code-ltr {
+    direction: ltr;
+    text-align: left;
+    font-family: ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
+  }
+
+  ::-webkit-scrollbar {
+    width: 9px;
+    height: 9px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+  }
+}
+
+/* Diagram preview backdrop. */
+@utility preview-checkerboard {
+  background:
+    repeating-conic-gradient(#eef2f7 0% 25%, #fff 0% 50%) 50% / 22px 22px;
+}
+
+/* Base UI exposes open/closed + side via data-* attributes; small enter/exit
+   transitions for popovers, selects, dialogs, toasts. */
+@layer components {
+  .bui-pop {
+    transform-origin: var(--transform-origin);
+    transition:
+      opacity 150ms ease,
+      transform 150ms ease;
+  }
+  .bui-pop[data-starting-style],
+  .bui-pop[data-ending-style] {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+
+  .toast-enter {
+    animation: toast-in 180ms ease-out;
+  }
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px) scale(0.98);
+    }
+  }
+}

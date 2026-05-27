@@ -1,0 +1,985 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mermaid → Clean SVG</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400..900&display=swap" rel="stylesheet">
+  <style>
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: #f1f1f1; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+  </style>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans h-screen flex flex-col" x-data="app()" x-init="init()">
+
+  <header class="bg-white border-b border-gray-200 px-6 py-4 flex flex-col md:flex-row justify-between items-center shadow-sm gap-4 flex-wrap">
+    <div>
+      <h1 class="text-xl font-bold text-gray-900">Mermaid → Clean SVG</h1>
+      <p class="text-xs text-gray-500 mt-1">beautiful-mermaid · pdfmake · SVG-to-PDFKit · HarfBuzz · xast</p>
+    </div>
+    <div id="statusBar" class="text-xs px-3 py-1 rounded-full font-mono max-w-sm truncate" x-show="status.visible" x-text="status.message" :class="status.class"></div>
+    <div class="flex items-center gap-4">
+      <label class="bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100 px-4 py-2 rounded-md cursor-pointer text-sm font-medium transition">
+        Load .mmd / .txt
+        <input type="file" id="fileInput" accept=".mmd,.txt" class="hidden" x-ref="fileInput" @change="loadFile" />
+      </label>
+      <select id="exampleSwitcher" class="bg-white border border-gray-200 text-gray-700 px-3 py-2 rounded-md text-sm font-medium shadow-sm" x-model="example" @change="loadExample(example)">
+        <option value="en">Example: EN</option>
+        <option value="ar">Example: AR</option>
+      </select>
+      <button id="processBtn" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-md text-sm font-medium shadow-sm transition" @click="process" :disabled="isProcessing" x-text="processLabel"></button>
+    </div>
+  </header>
+
+  <main class="flex-1 overflow-hidden flex flex-col md:flex-row p-6 gap-6">
+    <div class="flex-1 flex flex-col bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+      <div class="bg-gray-50 border-b border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 flex justify-between">
+        <span>Mermaid Syntax</span>
+        <button id="clearBtn" class="text-xs text-red-500 hover:text-red-700" @click="clear">Clear</button>
+      </div>
+      <textarea id="inputArea" class="flex-1 w-full p-4 text-sm font-mono focus:outline-none resize-none" placeholder="Paste Mermaid syntax here..." x-model="input">graph TD
+  A[Start] --> B{Process?}
+  B -->|Yes| C[Render via beautiful-mermaid]
+  C --> D[Inline CSS & Clean Variables]
+  D --> E[Output Clean SVG]
+  B -->|No| F[End]</textarea>
+    </div>
+
+    <div class="flex-1 flex flex-col bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+      <div class="bg-gray-50 border-b border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 flex justify-between items-center">
+        <span>Cleaned Output</span>
+        <div class="flex gap-3">
+          <button id="previewBtn" class="text-xs text-indigo-600 hover:text-indigo-800" @click="togglePreview">Toggle Preview</button>
+          <button id="copyBtn" class="text-xs text-green-600 hover:text-green-800" @click="copy" x-text="copyLabel"></button>
+          <button id="saveSvgBtn" class="text-xs text-indigo-600 hover:text-indigo-800" @click="saveSvg">Save SVG</button>
+          <button id="savePdfBtn" class="text-xs text-purple-600 hover:text-purple-800" @click="savePdf">Save PDF</button>
+        </div>
+      </div>
+      <textarea id="outputArea" class="flex-1 w-full p-4 text-sm font-mono bg-gray-50 focus:outline-none resize-none" readonly placeholder="Processed SVG will appear here..." x-model="output" x-show="!showPreview"></textarea>
+      <div id="previewArea" class="flex-1 w-full overflow-auto" style="background: repeating-conic-gradient(#f3f4f6 0% 25%,#fff 0% 50%) 50%/20px 20px;" x-show="showPreview">
+        <div class="min-w-max min-h-full flex p-8">
+          <div id="previewContainer" class="m-auto shadow-md border border-gray-200 bg-white p-4 rounded-sm" x-html="output"></div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- pdfmake: uses SVG-to-PDFKit internally -->
+  <script src="https://unpkg.com/pdfmake@0.2.10/build/pdfmake.min.js"></script>
+  <script src="https://unpkg.com/pdfmake@0.2.10/build/vfs_fonts.js"></script>
+  <script type="module">
+    // ─── imports ────────────────────────────────────────────────────────────────
+    import { renderMermaidSVG } from 'https://esm.sh/beautiful-mermaid@latest?bundle';
+    import { parse as parseCSS }  from 'https://esm.sh/@adobe/css-tools@4.3.3?bundle';
+    import { fromXml }            from 'https://esm.sh/xast-util-from-xml@4.0.0?bundle';
+    import { toXml }              from 'https://esm.sh/xast-util-to-xml@4.0.0?bundle';
+    import { direction }          from 'https://esm.sh/direction@2.0.1?bundle';
+    // chenglou/pretext — UAX#9 BiDi (forked from pdf.js) + canvas text metrics.
+    // Used for base-direction detection and visual run reordering. See the
+    // reusable extraction in src/plugins/pretext-bidi.js.
+    import { prepareWithSegments } from 'https://esm.sh/@chenglou/pretext@0.0.7';
+
+    // ─── BiDi (Unicode Bidirectional Algorithm) via chenglou/pretext ────────────
+    // pretext segments text and resolves a per-segment embedding level (UAX #9,
+    // forked from pdf.js). We use it for two things:
+    //   1. base paragraph direction → right-align RTL section labels, set `dir`
+    //   2. visual run reordering     → correct glyph order for PDF/HarfBuzz export
+    // pretext measures via a canvas (browser). If it ever throws (no canvas /
+    // pre-LTR), we fall back to the lightweight `direction` heuristic and to
+    // logical-order shaping.  (Kept in sync with src/plugins/pretext-bidi.js.)
+    const BIDI_FONT = '16px Inter, system-ui, sans-serif';
+    const _bidiCache = new Map();
+    function analyzeBidi(text) {
+      const t = typeof text === 'string' ? text : '';
+      if (_bidiCache.has(t)) return _bidiCache.get(t);
+      let p = null;
+      try { p = prepareWithSegments(t, BIDI_FONT); } catch (_) { p = null; }
+      _bidiCache.set(t, p);
+      return p;
+    }
+
+    // Base paragraph direction: 'rtl' | 'ltr' | null (empty). The base level is
+    // the minimum segment level (levels only ever rise above the paragraph base);
+    // pure-LTR text yields segLevels === null.
+    function baseDirection(text) {
+      const t = (text || '').trim();
+      if (!t) return null;
+      const p = analyzeBidi(t);
+      if (p && p.segLevels && p.segLevels.length) {
+        let min = Infinity;
+        for (const lv of p.segLevels) if (lv < min) min = lv;
+        return (min & 1) ? 'rtl' : 'ltr';
+      }
+      if (p) return 'ltr';                 // analysed, no RTL chars → ltr
+      return direction(t) || null;         // pretext unavailable → heuristic
+    }
+
+    // UAX #9 rule L2 — turn per-segment embedding levels into a visual segment
+    // order (array of logical indices, left → right).
+    function reorderVisual(levels) {
+      const n = levels.length;
+      const order = Array.from({ length: n }, (_, i) => i);
+      let highest = 0, lowestOdd = Infinity;
+      for (const lv of levels) {
+        if (lv > highest) highest = lv;
+        if ((lv & 1) && lv < lowestOdd) lowestOdd = lv;
+      }
+      for (let lvl = highest; lvl >= lowestOdd; lvl--) {
+        let i = 0;
+        while (i < n) {
+          if (levels[order[i]] >= lvl) {
+            let j = i + 1;
+            while (j < n && levels[order[j]] >= lvl) j++;
+            for (let a = i, b = j - 1; a < b; a++, b--) {
+              const t = order[a]; order[a] = order[b]; order[b] = t;
+            }
+            i = j;
+          } else i++;
+        }
+      }
+      return order;
+    }
+
+    // Split mixed-direction text into directional runs in *visual* (L→R) order.
+    // Each run keeps its text in logical order — HarfBuzz reorders glyphs within
+    // a run. `forceBase` ('rtl'|'ltr') pins the paragraph base direction (used so
+    // every line of a multi-line label shares one direction) by prefixing an
+    // RLM/LRM marker, which is stripped from the result. Returns null when no
+    // reordering is needed (pure LTR / no metrics).
+    function visualRuns(text, forceBase) {
+      const probe = forceBase === 'rtl' ? '‏' + text
+                  : forceBase === 'ltr' ? '‎' + text
+                  : text;
+      const p = analyzeBidi(probe);
+      if (!p || !p.segLevels) return null;
+      const segs = p.segments, levels = p.segLevels;
+      const order = reorderVisual(levels);
+      const runs = [];
+      let i = 0;
+      while (i < order.length) {
+        const lvl = levels[order[i]];
+        let j = i + 1;
+        while (j < order.length && levels[order[j]] === lvl) j++;
+        const idxs = order.slice(i, j).sort((a, b) => a - b); // restore logical order
+        let s = '';
+        for (const k of idxs) s += segs[k];
+        runs.push({ text: s, rtl: (lvl & 1) === 1 });
+        i = j;
+      }
+      if (forceBase) {                                  // drop the injected marker
+        for (const r of runs) r.text = r.text.replace(/[‎‏]/g, '');
+        return runs.filter(r => r.text.length);
+      }
+      return runs;
+    }
+
+    // ─── HarfBuzz (BiDi + Arabic shaping) — required for PDF export ─────────────
+    let _hb = null;
+    const _hbFontCache = new Map();
+    const HB_BASE = 'https://harfbuzz.github.io/harfbuzzjs/';
+    let _hbLoadPromise = null;
+    async function ensureHarfbuzz() {
+      if (_hb) return _hb;
+      if (_hbLoadPromise) return _hbLoadPromise;
+      _hbLoadPromise = (async () => {
+        if (typeof globalThis.createHarfBuzz === 'function' && typeof globalThis.hbjs === 'function') {
+          _hb = await globalThis.createHarfBuzz().then(m => globalThis.hbjs(m));
+          return _hb;
+        }
+        await new Promise((resolve, reject) => {
+          const s1 = document.createElement('script');
+          s1.src = HB_BASE + 'hb.js';
+          s1.onload = () => {
+            const s2 = document.createElement('script');
+            s2.src = HB_BASE + 'hbjs.js';
+            s2.onload = () => {
+              globalThis.createHarfBuzz().then(m => { _hb = globalThis.hbjs(m); resolve(); }).catch(reject);
+            };
+            s2.onerror = () => reject(new Error('Failed to load hbjs.js'));
+            document.head.appendChild(s2);
+          };
+          s1.onerror = () => reject(new Error('Failed to load hb.js'));
+          document.head.appendChild(s1);
+        });
+        return _hb;
+      })();
+      return _hbLoadPromise;
+    }
+    async function getHbFont(fontUrl, bold = false) {
+      const key = fontUrl + (bold ? ':b' : '');
+      if (_hbFontCache.has(key)) return _hbFontCache.get(key);
+      const hb = await ensureHarfbuzz();
+      const buf = await fetch(fontUrl).then(r => r.arrayBuffer());
+      const blob = hb.createBlob(buf);
+      const face = hb.createFace(blob, 0);
+      const font = hb.createFont(face);
+      _hbFontCache.set(key, { font, face, blob });
+      return { font, face, blob };
+    }
+    const RTL_OR_ARABIC_RE = /[\u0590-\u05FF\u0600-\u06FF\u0700-\u074F]/;
+    function needsShaping(text) { return RTL_OR_ARABIC_RE.test(text); }
+
+    // ─── PDF font config (customize for your fonts) ─────────────────────────────
+    // Add fonts from URLs; svgFontMap maps SVG font-family → pdfmake font name
+    window.PDF_FONT_CONFIG = {
+      fonts: [
+        { name: 'Vazirmatn', urls: { normal: 'https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/fonts/ttf/Vazirmatn-Regular.ttf', bold: 'https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/fonts/ttf/Vazirmatn-Bold.ttf' } }
+      ],
+      svgFontMap: { 'Vazirmatn': 'Vazirmatn', 'Vazirmatn, system-ui': 'Vazirmatn' }
+    };
+
+    function arrayBufferToBase64(buffer) {
+      const bytes = new Uint8Array(buffer);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      }
+      return btoa(binary);
+    }
+
+    let _pdfFontsLoaded = false;
+    async function ensurePdfFontsLoaded() {
+      if (_pdfFontsLoaded) return;
+      const pdfMake = window.pdfMake;
+      if (!pdfMake?.createPdf) return;
+      const cfg = window.PDF_FONT_CONFIG;
+      if (!cfg?.fonts?.length) { _pdfFontsLoaded = true; return; }
+      if (!pdfMake.vfs && pdfMake.vfs_fonts) pdfMake.vfs = pdfMake.vfs_fonts;
+      pdfMake.vfs = pdfMake.vfs || {};
+      const fontDescriptors = { ...(pdfMake.fonts || {}) };
+      for (const f of cfg.fonts) {
+        const desc = {};
+        for (const [style, url] of Object.entries(f.urls)) {
+          if (!url) continue;
+          const key = style === 'normal' ? 'normal' : style === 'bold' ? 'bold' : style === 'italic' ? 'italics' : style;
+          const filename = `${f.name}-${style}.ttf`;
+          if (!pdfMake.vfs[filename]) {
+            const buf = await fetch(url).then(r => r.arrayBuffer());
+            pdfMake.vfs[filename] = arrayBufferToBase64(buf);
+          }
+          desc[key] = filename;
+        }
+        if (Object.keys(desc).length) fontDescriptors[f.name] = desc;
+      }
+      pdfMake.fonts = fontDescriptors;
+      _pdfFontsLoaded = true;
+    }
+
+    function applyPdfFontMap(svgStr, fontMap) {
+      if (!fontMap || !Object.keys(fontMap).length) return svgStr;
+      let s = svgStr;
+      for (const [from, to] of Object.entries(fontMap)) {
+        const esc = from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        s = s.replace(new RegExp(`font-family:\\s*["']?${esc}[^"']*["']?`, 'gi'), `font-family: "${to}"`);
+        s = s.replace(new RegExp(`font-family=["']${esc}[^"']*["']`, 'gi'), `font-family="${to}"`);
+      }
+      return s;
+    }
+
+    // debug: confirm all four resolved at module init
+    // console.log('[init]', { renderMermaidSVG, parseCSS, fromXml, toXml });
+
+    // xast self-test – round-trip a trivial SVG on load to catch parse-xml issues early
+    // try {
+    //   const t = fromXml('<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>');
+    //   console.log('[xast self-test] tree:', t);
+    //   console.log('[xast self-test] out:', toXml(t, { closeEmptyElements: true }));
+    // } catch(e) { console.error('[xast self-test FAILED]', e); }
+
+    // ─── color helpers ───────────────────────────────────────────────────────────
+    function hexToRgb(hex) {
+      hex = hex.replace('#', '');
+      if (hex.length === 3) hex = hex.split('').map(x => x + x).join('');
+      if (hex.length === 8) hex = hex.slice(0, 6);
+      return [parseInt(hex.slice(0,2),16), parseInt(hex.slice(2,4),16), parseInt(hex.slice(4,6),16)];
+    }
+    const rgbToHex = (r,g,b) =>
+      '#' + [r,g,b].map(x => Math.round(x).toString(16).padStart(2,'0')).join('').toUpperCase();
+
+    const mixHex = (c1, c2, w1) => {
+      const [r1,g1,b1] = hexToRgb(c1), [r2,g2,b2] = hexToRgb(c2);
+      return rgbToHex(r1*w1+r2*(1-w1), g1*w1+g2*(1-w1), b1*w1+b2*(1-w1));
+    };
+
+    // resolve var() and color-mix() chains against a collected env map
+    function resolveCss(str, env) {
+      if (typeof str !== 'string') return str;
+      let lim = 60;
+
+      // resolve var(--name, fallback) innermost-first
+      while (str.includes('var(') && lim-- > 0) {
+        const s = str.lastIndexOf('var(');
+        let e = s + 4, p = 1;
+        while (e < str.length && p > 0) { if (str[e]==='(') p++; if (str[e]===')') p--; e++; }
+        const inner = str.slice(s+4, e-1);
+        const ci    = inner.indexOf(',');
+        const name  = (ci < 0 ? inner : inner.slice(0, ci)).trim();
+        const fb    = ci < 0 ? '' : inner.slice(ci+1).trim();
+        str = str.slice(0, s) + (env[name] ?? fb) + str.slice(e);
+      }
+
+      // resolve color-mix(in srgb, #hex pct%, #hex)
+      lim = 60;
+      while (str.includes('color-mix(') && lim-- > 0) {
+        const s = str.lastIndexOf('color-mix(');
+        let e = s + 10, p = 1;
+        while (e < str.length && p > 0) { if (str[e]==='(') p++; if (str[e]===')') p--; e++; }
+        const m = str.slice(s+10, e-1)
+          .match(/in\s+srgb\s*,\s*(#[a-fA-F0-9]+)\s+(\d+(?:\.\d+)?)%\s*,\s*(#[a-fA-F0-9]+)/);
+        if (m) str = str.slice(0, s) + mixHex(m[1], m[3], parseFloat(m[2])/100) + str.slice(e);
+        else break;
+      }
+      return str;
+    }
+
+    // ─── XML pre-sanitiser ───────────────────────────────────────────────────────
+    // @rgrove/parse-xml (used by xast-util-from-xml) is a *strict* XML parser.
+    // Mermaid emits HTML-flavoured SVG which can contain bare & and HTML entities.
+    function sanitiseForXml(svg) {
+      // debug: console.log('[sanitise] raw length', svg.length, svg.slice(0, 300));
+      return svg
+        .replace(/^<\?xml[^?]*\?>\s*/i, '')               // strip xml declaration if present
+        .replace(/&(?!(?:#\d+|#x[\da-fA-F]+|[a-zA-Z]\w*);)/g, '&amp;') // escape bare &
+        .replace(/&nbsp;/g,  '&#160;')                     // HTML entity → numeric
+        .replace(/&mdash;/g, '&#8212;')
+        .replace(/&ndash;/g, '&#8211;')
+        .replace(/<(br|hr|img|input)(\s[^>]*)?\s*>/gi, '<$1$2/>'); // self-close void tags
+    }
+
+    // ─── xast indent helper ──────────────────────────────────────────────────────
+    // xast-util-to-xml@4 has NO built-in indent option.
+    // We inject whitespace `text` nodes into the tree so toXml emits pretty output natively.
+    // Nodes with mixed content (element + inline text, e.g. <text>, <tspan>) are left alone.
+    const INDENT = '  ';
+    const textNode = v => ({ type: 'text', value: v });
+    const INLINE_ELEMENTS = new Set(['text', 'tspan', 'title', 'desc']);
+
+    function collectText(node) {
+      if (!node?.children) return '';
+      let text = '';
+      for (const child of node.children) {
+        if (child.type === 'text') text += child.value;
+        else if (child.children) text += collectText(child);
+      }
+      return text;
+    }
+
+    function getNodeDirection(node) {
+      const text = collectText(node).trim();
+      if (!text) return null;
+      return baseDirection(text);
+    }
+
+    // Block-graph section labels (`<g class="subgraph">`) are emitted at the
+    // header's left edge — correct for LTR, wrong for RTL titles. When the title's
+    // base direction is RTL we move its anchor x to the header's right edge (minus
+    // the original inner padding) so the label hugs the right side.
+    //
+    // Anchor side: text-anchor is *logical* — for an RTL line "start" is the right
+    // edge and "end" is the left edge. We set direction="rtl" + unicode-bidi:isolate
+    // and keep text-anchor="start" (right edge anchored, text grows left). Using
+    // "end" would anchor the left edge and let the text overflow to the right.
+    // The PDF glyph path mirrors this logical→visual mapping (see processNode).
+    function alignClusterLabel(g) {
+      const children = g.children || [];
+      const label = children.find(c => c.type === 'element' && c.name === 'text');
+      if (!label) return;
+      const text = collectText(label).trim();
+      if (!text || baseDirection(text) !== 'rtl') return;   // only flip RTL titles
+
+      // The header/body band is the widest rect in the group.
+      let band = null;
+      for (const c of children) {
+        if (c.type === 'element' && c.name === 'rect') {
+          const w = parseFloat(c.attributes?.width);
+          const x = parseFloat(c.attributes?.x);
+          if (!isNaN(w) && !isNaN(x) && (!band || w > band.w)) band = { x, w };
+        }
+      }
+      if (!band) return;
+
+      const curX = parseFloat(getNodeAttr(label, 'x', ''));
+      const pad = !isNaN(curX) ? Math.max(0, curX - band.x) : 0;   // mirror left padding
+      label.attributes ??= {};
+      label.attributes['text-anchor'] = 'start';                  // RTL start = right edge
+      label.attributes.x = String(band.x + band.w - pad);
+      label.attributes.direction = 'rtl';
+      label.attributes['unicode-bidi'] = 'isolate';
+    }
+
+    function getNodeAttr(node, attr, defaultValue) {
+      const v = node?.attributes?.[attr];
+      return v != null ? String(v) : defaultValue;
+    }
+    function getInheritedFontSize(node) {
+      let n = node;
+      while (n) {
+        const v = parseFloat(getNodeAttr(n, 'font-size', ''));
+        if (!isNaN(v)) return v;
+        n = n.parent?.type === 'element' ? n.parent : null;
+      }
+      return 16;
+    }
+    function getInheritedFontFamily(node) {
+      let n = node;
+      while (n) {
+        const v = getNodeAttr(n, 'font-family', '');
+        if (v) return v.split(',')[0].trim().replace(/^["']|["']$/g, '');
+        n = n.parent?.type === 'element' ? n.parent : null;
+      }
+      return 'Vazirmatn';
+    }
+    function getInheritedFontWeight(node) {
+      let n = node;
+      while (n) {
+        const v = getNodeAttr(n, 'font-weight', '');
+        if (v && /bold|600|700|800|900/i.test(v)) return true;
+        n = n.parent?.type === 'element' ? n.parent : null;
+      }
+      return false;
+    }
+    function getTextAnchorPoint(node) {
+      let n = node;
+      while (n) {
+        if (n.type === 'element' && (n.name === 'text' || n.name === 'tspan')) {
+          const x = parseFloat(getNodeAttr(n, 'x', ''));
+          const y = parseFloat(getNodeAttr(n, 'y', ''));
+          if (!isNaN(x) || !isNaN(y)) return { x: isNaN(x) ? 0 : x, y: isNaN(y) ? 0 : y };
+        }
+        n = n.parent;
+      }
+      return { x: 0, y: 0 };
+    }
+    // text-anchor is usually set on the <text>, inherited by its <tspan> lines.
+    function getInheritedTextAnchor(node) {
+      let n = node;
+      while (n) {
+        const v = n.attributes?.['text-anchor'];
+        if (v) return v;
+        n = n.parent;
+      }
+      return 'start';
+    }
+    // The paragraph direction for a line is taken from the enclosing <text>'s full
+    // content, so every <tspan> line of a multi-line label shares one direction.
+    function getParagraphText(node) {
+      let n = node;
+      while (n) {
+        if (n.type === 'element' && n.name === 'text') return collectText(n);
+        n = n.parent;
+      }
+      return collectText(node);
+    }
+
+    async function applyHarfbuzzForPdf(svgStr, fontConfig) {
+      if (!fontConfig?.fonts?.length) throw new Error('PDF_FONT_CONFIG.fonts is required for HarfBuzz shaping');
+      let tree;
+      try { tree = fromXml(sanitiseForXml(svgStr)); } catch (e) { throw new Error('Invalid SVG for PDF: ' + e.message); }
+      const hb = await ensureHarfbuzz();
+      const fontMap = fontConfig.svgFontMap ?? {};
+      function resolveFontUrl(family, bold) {
+        const fam = family.split(',')[0].trim().replace(/^["']|["']$/g, '');
+        for (const f of fontConfig.fonts) {
+          if (fam === f.name || fam === (fontMap[f.name] ?? f.name)) {
+            const u = f.urls;
+            return (bold && u?.bold) ? u.bold : (u?.normal ?? u?.bold);
+          }
+        }
+        const first = fontConfig.fonts[0]?.urls;
+        return first ? ((bold && first.bold) ? first.bold : (first.normal ?? first.bold)) : null;
+      }
+
+      const UPEM = 1000;
+      // Shape a single uni-directional run. Input is logical order; HarfBuzz
+      // emits glyphs in visual order within the run (RTL handled via
+      // guessSegmentProperties). Returns scaled glyph placements + total advance.
+      function shapeRun(text, fontSize, fontFamily, fontWeight) {
+        const url = resolveFontUrl(fontFamily, fontWeight);
+        if (!url) return Promise.resolve({ glyphs: [], advance: 0 });
+        return getHbFont(url, fontWeight).then(({ font }) => {
+          const buffer = hb.createBuffer();
+          buffer.addText(text);
+          buffer.guessSegmentProperties();
+          hb.shape(font, buffer);
+          const glyphs = buffer.json();
+          buffer.destroy();
+          const scale = fontSize / UPEM;
+          const out = [];
+          let x = 0, y = 0;
+          for (const g of glyphs || []) {
+            const pathStr = font.glyphToPath(g.g);
+            const dx = (g.dx || 0) * scale, dy = (g.dy || 0) * scale;
+            if (pathStr) out.push({ d: String(pathStr), tx: x + dx, ty: -(y + dy) });
+            x += (g.ax || 0) * scale;
+            y += (g.ay || 0) * scale;
+          }
+          return { glyphs: out, advance: x };
+        });
+      }
+
+      async function processNode(node, parent) {
+        if (!node?.children) return;
+        const toProcess = [];
+        for (let i = 0; i < node.children.length; i++) {
+          const child = node.children[i];
+          if (child.type === 'text' && child.value) {
+            const text = child.value;
+            if (text.trim() && needsShaping(text)) {
+              const elem = node.name === 'text' || node.name === 'tspan' ? node : parent;
+              toProcess.push({ elem, text, index: i });
+            }
+          } else if (child.type === 'element') {
+            await processNode(child, node);
+          }
+        }
+        for (const { elem, text, index } of toProcess) {
+          const fontSize = getInheritedFontSize(elem);
+          const fontFamily = getInheritedFontFamily(elem);
+          const fontWeight = getInheritedFontWeight(elem);
+          const fill = getNodeAttr(elem, 'fill', '#000000') || getNodeAttr(elem, 'color', '#000000');
+          const anchor = getInheritedTextAnchor(elem);
+          const scale = fontSize / UPEM;
+
+          // Paragraph base direction: for a <tspan> line use the enclosing <text>'s
+          // full content so every line of a multi-line label shares one direction
+          // (mirrors the SVG). This keeps a Latin-led line consistent with its
+          // Arabic siblings instead of flipping by its own first-strong char.
+          const rtlBase = baseDirection(getParagraphText(elem)) === 'rtl';
+
+          // BiDi: lay out visual-order directional runs (pretext), pinned to the
+          // paragraph base. Fall back to a single run when metrics are missing.
+          let runs = null;
+          try { runs = visualRuns(text, rtlBase ? 'rtl' : 'ltr'); } catch (_) { runs = null; }
+          if (!runs) runs = [{ text, rtl: rtlBase }];
+
+          const shaped = [];
+          let totalW = 0;
+          for (const run of runs) {
+            const r = await shapeRun(run.text, fontSize, fontFamily, fontWeight);
+            shaped.push({ glyphs: r.glyphs, base: totalW });
+            totalW += r.advance;
+          }
+          // Honour text-anchor ourselves (the text node is replaced by glyph
+          // paths). text-anchor is *logical* (start/end relative to the base
+          // direction), but our runs are laid out in visual order (L→R), so we map
+          // it through the paragraph base: for an RTL line "start" is the right
+          // edge and "end" the left. This matches the SVG, right-aligning RTL
+          // section labels (text-anchor="start") in the PDF too.
+          const anchorDx =
+            anchor === 'middle' ? -totalW / 2 :
+            anchor === 'end'    ? (rtlBase ? 0 : -totalW) :
+                                  (rtlBase ? -totalW : 0);   // 'start'
+
+          const { x, y } = getTextAnchorPoint(elem);
+          const safeFill = (fill || '#000000').replace(/"/g, '&quot;');
+          const g = { type: 'element', name: 'g', attributes: { transform: `translate(${x},${y})`, fill: fill || undefined }, children: [] };
+          for (const rs of shaped) {
+            for (const gl of rs.glyphs) {
+              const tx = gl.tx + rs.base + anchorDx;
+              const safeD = gl.d.replace(/"/g, '&quot;');
+              const p = `<path d="${safeD}" transform="translate(${tx},${gl.ty}) scale(${scale},${-scale})" fill="${safeFill}"/>`;
+              try {
+                const sub = fromXml('<svg xmlns="http://www.w3.org/2000/svg">' + p + '</svg>');
+                const pathChild = sub?.children?.[0]?.children?.[0];
+                if (pathChild) g.children.push(pathChild);
+              } catch (_) {}
+            }
+          }
+          if (g.children.length) {
+            g.parent = node;
+            g.children.forEach(c => { c.parent = g; });
+            node.children[index] = g;
+          }
+        }
+      }
+
+      function setParentRefs(node, parent) {
+        if (node.type === 'element') node.parent = parent;
+        node.children?.forEach(c => setParentRefs(c, node));
+      }
+      setParentRefs(tree, null);
+
+      await processNode(tree, null);
+
+      try { return toXml(tree, { closeEmptyElements: true, quote: '"' }).replace(/^<\?xml[^?]*\?>\n?/, '').trimEnd(); } catch (e) { throw new Error('HarfBuzz SVG serialization failed: ' + e.message); }
+    }
+
+    function indentTree(node, depth = 0) {
+      if (node.type !== 'element' && node.type !== 'root') return;
+      const children = node.children ?? [];
+
+      // skip inline elements — their text content must not be touched
+      if (INLINE_ELEMENTS.has(node.name)) return;
+
+      // check if any child is an element (vs pure text node)
+      const hasElementChild = children.some(c => c.type === 'element');
+      if (!hasElementChild) return;
+
+      const pad       = INDENT.repeat(depth + 1);
+      const closePad  = INDENT.repeat(depth);
+      const spaced = [];
+
+      for (const child of children) {
+        // strip existing whitespace-only text nodes first
+        if (child.type === 'text' && child.value.trim() === '') continue;
+        spaced.push(textNode('\n' + pad));
+        spaced.push(child);
+        // recurse
+        indentTree(child, depth + 1);
+      }
+
+      if (spaced.length > 0) spaced.push(textNode('\n' + closePad));
+      node.children = spaced;
+    }
+
+    // ─── main SVG cleaner ────────────────────────────────────────────────────────
+    const PRESENTATION_ATTRS = new Set(['fill','stroke','stroke-width','opacity','color','font-size','font-weight']);
+    const ROUND_ATTRS        = new Set(['x','y','width','height','rx','ry','cx','cy','r','x1','y1','x2','y2']);
+
+    function cleanSVG(rawSvg) {
+      // ── 1. sanitise for strict XML parser
+      const sanitised = sanitiseForXml(rawSvg);
+      // debug: console.log('[cleanSVG] sanitised', sanitised.slice(0, 500));
+
+      // ── 2. parse → xast tree
+      // fromXml(string) → { type:'root', children:[...] }
+      // throws VFileMessage on invalid XML
+      let tree;
+      try {
+        tree = fromXml(sanitised);
+      } catch (e) {
+        // debug: console.error('[fromXml] threw', e, sanitised.slice(0, 1000));
+        throw new Error('fromXml: ' + e.message);
+      }
+      // debug: console.log('[cleanSVG] tree', tree);
+
+      // ── 3. pass 1 — collect all CSS custom properties into env
+      const env = {};
+
+      function extractVars(node) {
+        if (node.type === 'element') {
+          // vars inlined on <svg style="--foo:bar">
+          if (node.name === 'svg' && node.attributes?.style) {
+            for (const rule of node.attributes.style.split(';')) {
+              const i = rule.indexOf(':');
+              if (i > 0 && rule.slice(0, i).trim().startsWith('--'))
+                env[rule.slice(0, i).trim()] = rule.slice(i+1).trim();
+            }
+          }
+          // vars inside <style> — children are xast `text` nodes (not innerHTML)
+          if (node.name === 'style') {
+            const css = (node.children ?? []).filter(c => c.type === 'text').map(c => c.value).join('');
+            // debug: console.log('[extractVars] <style> length', css.length, css.slice(0,200));
+            if (css) {
+              try {
+                parseCSS(css)?.stylesheet?.rules?.forEach(rule =>
+                  rule.declarations?.forEach(d => {
+                    if (d.type === 'declaration' && d.property?.startsWith('--'))
+                      env[d.property] = d.value;
+                  })
+                );
+              } catch (e) { /* debug: console.warn('[parseCSS]', e.message) */ }
+            }
+          }
+        }
+        node.children?.forEach(extractVars);
+      }
+
+      extractVars(tree);
+      // debug: console.log('[cleanSVG] env vars found', Object.keys(env).length, env);
+
+      // ── 4. pass 2 — walk tree, mutate in-place, return false to remove node
+      function walk(node) {
+        if (node.type !== 'element') {
+          node.children?.forEach(walk); // recurse root/cdata/etc
+          return true;
+        }
+
+        // remove <style> blocks — CSS is being inlined
+        if (node.name === 'style') return false;
+        // prune empty <defs>
+        if (node.name === 'defs' && !node.children?.length) return false;
+
+        node.attributes ??= {};
+
+        // RTL block-graph section labels: right-align the title within its band.
+        // Done before recursing so the per-text handler below keeps our anchor.
+        if (node.name === 'g' && /\b(subgraph|cluster)\b/.test(node.attributes.class || '')) {
+          alignClusterLabel(node);
+        }
+
+        if (node.name === 'svg') {
+          // resolve background, ensure xmlns
+          const bg = env['--bg'] ? resolveCss(env['--bg'], env) : '#FFFFFF';
+          // debug: console.log('[walk] <svg> bg →', bg);
+          node.attributes.style = `background:${bg}`;
+          node.attributes.xmlns ??= 'http://www.w3.org/2000/svg';
+
+        } else {
+          // font fallback + BiDi on text elements
+          if (node.name === 'text' || node.name === 'tspan') {
+            node.attributes['font-family'] = 'Vazirmatn, system-ui, sans-serif';
+            // A multi-line label is one <text> with a <tspan> per line. Resolve
+            // the base direction once from the whole label and apply it to every
+            // line, so a Latin-led line (e.g. "kpi_overall_by_dept لقسمه") doesn't
+            // flip relative to its Arabic siblings. We use unicode-bidi:isolate
+            // (not plaintext) because isolate honours the `direction` we set,
+            // whereas plaintext re-detects each line's base on its own.
+            if (node.name === 'text') {
+              const dir = getNodeDirection(node);
+              if (dir === 'rtl' || dir === 'ltr') {
+                node.attributes.direction = dir;
+                node.attributes['unicode-bidi'] = 'isolate';
+                for (const c of node.children || []) {
+                  if (c.type === 'element' && c.name === 'tspan') {
+                    c.attributes ??= {};
+                    c.attributes.direction = dir;
+                    c.attributes['unicode-bidi'] = 'isolate';
+                  }
+                }
+              }
+            } else if (!node.attributes.direction) {   // standalone tspan
+              const dir = getNodeDirection(node);
+              if (dir === 'rtl' || dir === 'ltr') {
+                node.attributes.direction = dir;
+                node.attributes['unicode-bidi'] = 'isolate';
+              }
+            }
+          }
+
+          // inline style attr → presentation attributes
+          if (node.attributes.style) {
+            const keep = [];
+            for (const s of node.attributes.style.split(';')) {
+              const i = s.indexOf(':');
+              if (i < 0) continue;
+              const k = s.slice(0, i).trim();
+              const v = resolveCss(s.slice(i+1).trim(), env);
+              if (PRESENTATION_ATTRS.has(k)) node.attributes[k] = v;
+              else if (!k.startsWith('--') && k !== 'background') keep.push(`${k}:${v}`);
+            }
+            if (keep.length) node.attributes.style = keep.join(';');
+            else             delete node.attributes.style;
+          }
+
+          // resolve var() / color-mix() in remaining attrs, round geometry values
+          for (const attr of Object.keys(node.attributes)) {
+            let v = String(node.attributes[attr]);
+            if (v.includes('var(') || v.includes('color-mix(')) v = resolveCss(v, env);
+            if (ROUND_ATTRS.has(attr)) { const f = parseFloat(v); if (!isNaN(f)) v = String(parseFloat(f.toFixed(2))); }
+            node.attributes[attr] = v;
+          }
+        }
+
+        // recurse + filter removed children
+        if (node.children) node.children = node.children.filter(c => walk(c));
+        return true;
+      }
+
+      walk(tree);
+
+      // ── 5. inject indentation whitespace nodes so toXml output is pretty
+      // (xast-util-to-xml@4 has no indent option — we pre-format the tree)
+      indentTree(tree);
+
+      // ── 6. serialise → XML string
+      // closeEmptyElements: true  →  <circle /> instead of <circle></circle>
+      // quote: '"'                →  consistent double-quote attributes
+      let out;
+      try {
+        out = toXml(tree, { closeEmptyElements: true, quote: '"' });
+      } catch (e) {
+        // debug: console.error('[toXml] threw', e);
+        throw new Error('toXml: ' + e.message);
+      }
+
+      // strip leading xml declaration (<?xml…?>) added by toXml
+      return out.replace(/^<\?xml[^?]*\?>\n?/, '').trimEnd();
+    }
+
+    const EXAMPLES = {
+      en: `graph TD
+  A[Start] --> B{Process?}
+  B -->|Yes| C[Render via beautiful-mermaid]
+  C --> D[Inline CSS & Clean Variables]
+  D --> E[Output Clean SVG]
+  B -->|No| F[End]`,
+      ar: `graph TD
+  A[البداية] --> B{قرار؟}
+  B -->|نعم| C[عرض عبر beautiful-mermaid]
+  C --> D[تنظيف CSS والمتغيرات]
+  D --> E[إخراج SVG نظيف]
+  B -->|لا| F[نهاية]`
+    };
+    function getSvgSize(svg) {
+      let width = parseFloat(svg.getAttribute('width'));
+      let height = parseFloat(svg.getAttribute('height'));
+      if (Number.isNaN(width) || Number.isNaN(height)) {
+        const viewBox = svg.getAttribute('viewBox');
+        if (viewBox) {
+          const parts = viewBox.split(/[\s,]+/).map(Number);
+          if (parts.length === 4) {
+            width = parts[2];
+            height = parts[3];
+          }
+        }
+      }
+      if (Number.isNaN(width) || Number.isNaN(height)) return null;
+      return { width, height };
+    }
+
+    function getFileNameFromInput(input) {
+      const firstLine = input.trim().split('\n')[0] || 'mermaid-diagram';
+      const cleaned = firstLine.replace(/[^a-z0-9-_]+/gi, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+      return cleaned || 'mermaid-diagram';
+    }
+
+    window.app = () => ({
+      input: EXAMPLES.en,
+      output: '',
+      example: 'en',
+      showPreview: false,
+      isProcessing: false,
+      status: {
+        message: '',
+        type: 'info',
+        visible: false,
+        class: 'bg-blue-100 text-blue-700'
+      },
+      copyLabel: 'Copy Code',
+      processLabel: 'Process Mermaid',
+      exportMount: null,
+      init() {
+        this.exportMount = document.createElement('div');
+        this.exportMount.style.position = 'fixed';
+        this.exportMount.style.left = '-99999px';
+        this.exportMount.style.top = '0';
+        this.exportMount.style.width = '0';
+        this.exportMount.style.height = '0';
+        this.exportMount.style.overflow = 'hidden';
+        this.exportMount.style.pointerEvents = 'none';
+        document.body.appendChild(this.exportMount);
+      },
+      setStatus(msg, type = 'info') {
+        const classes = {
+          ok: 'bg-green-100 text-green-700',
+          error: 'bg-red-100 text-red-700',
+          info: 'bg-blue-100 text-blue-700'
+        };
+        this.status.message = msg;
+        this.status.type = type;
+        this.status.class = classes[type] || classes.info;
+        this.status.visible = true;
+      },
+      loadExample(lang) {
+        const example = EXAMPLES[lang] || EXAMPLES.en;
+        this.input = example;
+        this.output = '';
+        this.setStatus(`Loaded ${lang.toUpperCase()} example`, 'info');
+      },
+      async process() {
+        const input = this.input.trim();
+        if (!input) { alert('Please provide Mermaid syntax.'); return; }
+        this.processLabel = 'Processing…';
+        this.isProcessing = true;
+        this.setStatus('Rendering…', 'info');
+        try {
+          let rawSvg = renderMermaidSVG(input);
+          if (rawSvg?.then) rawSvg = await rawSvg;
+          if (!rawSvg) throw new Error('renderMermaidSVG returned empty');
+          this.setStatus('Cleaning…', 'info');
+          const cleaned = cleanSVG(String(rawSvg));
+          this.output = cleaned;
+          this.setStatus(`Done ✓  (${cleaned.length} chars)`, 'ok');
+        } catch (e) {
+          this.setStatus('Error: ' + e.message, 'error');
+          console.error('[process error]', e);
+          alert('Error:\n' + e.message);
+        } finally {
+          this.processLabel = 'Process Mermaid';
+          this.isProcessing = false;
+        }
+      },
+      loadFile(e) {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const r = new FileReader();
+        r.onload = evt => {
+          this.input = evt.target.result;
+          this.process();
+        };
+        r.readAsText(file);
+      },
+      clear() {
+        this.input = '';
+        this.output = '';
+        this.setStatus('Cleared', 'info');
+      },
+      copy() {
+        if (!this.output) return;
+        navigator.clipboard.writeText(this.output).catch(() => {});
+        this.copyLabel = 'Copied!';
+        setTimeout(() => { this.copyLabel = 'Copy Code'; }, 2000);
+      },
+      togglePreview() {
+        this.showPreview = !this.showPreview;
+      },
+      getExportSvg() {
+        const svgText = this.output.trim();
+        if (!svgText) return null;
+        this.exportMount.innerHTML = svgText;
+        return this.exportMount.querySelector('svg');
+      },
+      saveSvg() {
+        const svg = this.getExportSvg();
+        if (!svg) { alert('Nothing to export.'); return; }
+        const name = getFileNameFromInput(this.input);
+        const blob = new Blob([this.output], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${name}.svg`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        this.setStatus('Saved SVG ✓', 'ok');
+      },
+      async savePdf() {
+        const pdfMake = window.pdfMake;
+        if (!pdfMake?.createPdf) { alert('pdfmake not loaded.'); return; }
+        const svg = this.getExportSvg();
+        if (!svg) { alert('Nothing to export.'); return; }
+        this.setStatus('Loading fonts…', 'info');
+        try {
+          await ensurePdfFontsLoaded();
+          const cfg = window.PDF_FONT_CONFIG;
+          const fontMap = cfg?.svgFontMap ?? { 'Vazirmatn': 'Roboto', 'Vazirmatn, system-ui': 'Roboto' };
+          this.setStatus('Preparing SVG (HarfBuzz shaping)…', 'info');
+          const size = getSvgSize(svg);
+          const width = size?.width || 600;
+          const height = size?.height || 400;
+          const name = getFileNameFromInput(this.input);
+          let svgStr = await applyHarfbuzzForPdf(this.output.trim(), cfg);
+          svgStr = applyPdfFontMap(svgStr, fontMap);
+          this.setStatus('Generating PDF…', 'info');
+          const dd = {
+            pageSize: { width, height },
+            pageMargins: 0,
+            content: [{ svg: svgStr, width, height }]
+          };
+          pdfMake.createPdf(dd).download(`${name}.pdf`);
+          this.setStatus('Saved PDF ✓', 'ok');
+        } catch (e) {
+          this.setStatus('Error: ' + e.message, 'error');
+          alert('Error:\n' + e.message);
+        }
+      }
+    });
+  </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+</body>
+</html>

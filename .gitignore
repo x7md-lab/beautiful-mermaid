@@ -1,0 +1,19 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+.vite/
+
+# vendored third-party research clones (kept locally; summarized in research/REVERSE-ENGINEERING.md)
+research/SVG-to-PDFKit/
+research/svg2pdf.js/
+
+# logs / temp / OS
+*.log
+_*.png
+.DS_Store
+Thumbs.db
+
+# local agent/editor config
+.claude/
