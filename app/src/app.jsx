@@ -8,6 +8,7 @@ import { useToast } from './components/ui/Toast.jsx';
 import { EditIcon, EyeIcon } from './components/ui/Icons.jsx';
 import { renderMermaid, fileNameFromInput } from './lib/render.js';
 import { cleanSVG } from './lib/clean-svg.js';
+import { relayoutMultilineSvg } from './lib/relayout-svg.js';
 import { formatXml } from './lib/format-xml.js';
 import { exportSvgToPdf } from './lib/pdf.js';
 import { downloadText } from './lib/download.js';
@@ -37,7 +38,10 @@ export function App() {
       setBusy(true);
       try {
         const cleaned = cleanSVG(await renderMermaid(text));
-        setOutput(cleaned);
+        // Flatten multi-line <tspan dy> labels to absolute per-line <text> so the
+        // SVG renders correctly on iOS/WebKit (and as an image).
+        const out = await relayoutMultilineSvg(cleaned);
+        setOutput(out);
         setMobileView('preview');
         notify(t('done'), 'ok');
       } catch (e) {

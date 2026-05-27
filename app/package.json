@@ -23,7 +23,8 @@
     "preact": "^10.25.4",
     "svg-to-pdfkit": "^0.1.8",
     "xast-util-from-xml": "^4.0.0",
-    "xast-util-to-xml": "^4.0.0"
+    "xast-util-to-xml": "^4.0.0",
+    "yoga-layout": "^3.2.1"
   },
   "devDependencies": {
     "@preact/preset-vite": "^2.9.4",
