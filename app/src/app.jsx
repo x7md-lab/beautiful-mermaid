@@ -120,14 +120,16 @@ export function App() {
     notify(t('cleared'));
   }, [notify]);
 
-  const editor = <EditorPane value={input} onInput={setInput} onClear={onClear} onProcess={() => process()} />;
+  const editor = (
+    <EditorPane value={input} onInput={setInput} onClear={onClear} onProcess={() => process()} busy={busy} />
+  );
   const out = (
     <OutputPane output={output} onCopy={onCopy} copied={copied} onSaveSvg={onSaveSvg} onSavePdf={onSavePdf} pdfBusy={pdfBusy} />
   );
 
   return (
     <div class="flex h-screen flex-col bg-gray-50 text-gray-800">
-      <Header preset={preset} onPreset={onPreset} onLoadFile={onLoadFile} onProcess={() => process()} busy={busy} />
+      <Header preset={preset} onPreset={onPreset} onLoadFile={onLoadFile} />
 
       {isDesktop ? (
         <main class="flex flex-1 gap-4 overflow-hidden p-4">

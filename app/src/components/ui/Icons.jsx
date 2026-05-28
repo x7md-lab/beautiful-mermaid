@@ -76,6 +76,13 @@ export const ChevronIcon = (p) => (
   </svg>
 );
 
+// GitHub mark — filled (not a stroke icon). Sized like the others.
+export const GithubIcon = (p) => (
+  <svg width="1.1em" height="1.1em" viewBox="0 0 24 24" fill="currentColor" {...p}>
+    <path d="M12 .5C5.7.5.5 5.7.5 12c0 5 3.3 9.3 7.9 10.8.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.8 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.2 1.2.9-.3 1.9-.4 2.9-.4s2 .1 2.9.4c2.2-1.5 3.2-1.2 3.2-1.2.6 1.6.2 2.8.1 3.1.7.8 1.2 1.8 1.2 3.1 0 4.5-2.7 5.5-5.3 5.8.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6C20.2 21.3 23.5 17 23.5 12 23.5 5.7 18.3.5 12 .5z" />
+  </svg>
+);
+
 // Composite "download" icons: a content glyph (document for PDF, </> for SVG)
 // with a small download arrow nested in the bottom-left corner — shared style.
 const DownloadBadge = () => (

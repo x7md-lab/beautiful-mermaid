@@ -16,6 +16,8 @@ export const AR = {
   savePdf: 'حفظ PDF',
   buildingPdf: 'تجهيز الـ PDF…',
   about: 'حول',
+  github: 'GitHub',
+  repoUrl: 'https://github.com/x7md-lab/beautiful-mermaid',
 
   // panes / tabs
   editor: 'المحرر',
