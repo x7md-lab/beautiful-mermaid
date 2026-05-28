@@ -4,6 +4,7 @@ import { App } from './app.jsx';
 import { TooltipProvider } from './components/ui/Tooltip.jsx';
 import { ToastProvider } from './components/ui/Toast.jsx';
 import { registerPreviewFonts } from './lib/fonts.js';
+import '@xyflow/react/dist/style.css';
 import './styles.css';
 
 addEventListener('unhandledrejection', (e) => console.error('UNHANDLED_REJECTION', e.reason?.stack || e.reason));
