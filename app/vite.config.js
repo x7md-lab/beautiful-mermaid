@@ -11,6 +11,10 @@ import { viteSingleFile } from 'vite-plugin-singlefile';
 // fonts are bundled (inlined).
 export default defineConfig({
   plugins: [preact(), tailwindcss(), viteSingleFile()],
+  optimizeDeps: {
+    // yoga-layout's entry uses top-level await; dev-time esbuild needs es2022 too.
+    esbuildOptions: { target: 'es2022' },
+  },
   build: {
     // es2022: yoga-layout's asm.js entry uses top-level await (fine in module
     // scripts; iOS Safari 15.4+ supports it).

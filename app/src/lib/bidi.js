@@ -1,17 +1,17 @@
 /**
- * BiDi helpers built on chenglou/pretext (`@chenglou/pretext`).
+ * BiDi helpers.
  *
- * pretext segments text and resolves a per-segment Unicode BiDi embedding level
- * (UAX #9, forked from pdf.js) during its measurement pass. We reuse just the
- * segments + levels it computes to:
- *   1. detect a label's base paragraph direction, and
- *   2. reorder mixed-direction text into visual runs for the PDF glyph shaper.
- *
- * pretext measures via a canvas (browser only); every entry point degrades to a
- * sensible default when metrics aren't available.
+ * Base direction comes from pretext (`@chenglou/pretext`), which also drives
+ * text measurement elsewhere. Per-character UAX #9 embedding levels come from
+ * `bidi-js`: pretext only emits one level per *word segment*, which collapsed
+ * mixed runs like "١٤٤٣هـ" (AN + AL) into a single LTR segment and reordered
+ * the trailing letters wrong; char-level levels split AN/AL correctly.
  */
 import { prepareWithSegments } from '@chenglou/pretext';
 import { direction } from 'direction';
+import bidiFactory from 'bidi-js';
+
+const _bidi = bidiFactory();
 
 const BIDI_FONT = '16px Inter, system-ui, sans-serif';
 const _cache = new Map();
@@ -91,27 +91,13 @@ export function reorderVisual(levels) {
  * order. Each run keeps its text in logical order — HarfBuzz reorders glyphs
  * within a single-direction run itself.
  * @param {string} text
- * @param {'rtl' | 'ltr'} [forceBase] Pin the paragraph base direction (so every
- *   line of a multi-line label shares one direction) via an RLM/LRM prefix that
- *   is stripped from the result.
- * @returns {{ text: string, rtl: boolean }[] | null} `null` when no reordering
- *   is needed (pure LTR) or metrics are unavailable.
+ * @param {'rtl' | 'ltr'} [forceBase] Pin the paragraph base direction.
+ * @returns {{ text: string, rtl: boolean, start: number }[] | null}
  */
 export function visualRuns(text, forceBase) {
-  const probe =
-    forceBase === 'rtl' ? '‏' + text : forceBase === 'ltr' ? '‎' + text : text;
-  const p = analyze(probe);
-  if (!p || !p.segLevels) return null;
-  const segs = p.segments;
-  const levels = p.segLevels;
-  // Char offset of each segment in the joined text, so each run can report where
-  // it begins logically (used to order the selectable-text layer in pdf.js).
-  const segOffset = new Array(segs.length);
-  for (let k = 0, off = 0; k < segs.length; k++) {
-    segOffset[k] = off;
-    off += segs[k].length;
-  }
-  const markerLen = forceBase ? 1 : 0;
+  if (!text) return null;
+  const { levels } = _bidi.getEmbeddingLevels(text, forceBase);
+  if (!levels || !levels.length) return null;
   const order = reorderVisual(levels);
   const runs = [];
   let i = 0;
@@ -121,13 +107,9 @@ export function visualRuns(text, forceBase) {
     while (j < order.length && levels[order[j]] === lvl) j++;
     const idxs = order.slice(i, j).sort((a, b) => a - b); // restore logical order
     let s = '';
-    for (const k of idxs) s += segs[k];
-    runs.push({ text: s, rtl: (lvl & 1) === 1, start: segOffset[idxs[0]] - markerLen });
+    for (const k of idxs) s += text[k];
+    runs.push({ text: s, rtl: (lvl & 1) === 1, start: idxs[0] });
     i = j;
-  }
-  if (forceBase) {
-    for (const r of runs) r.text = r.text.replace(/[‎‏]/g, '');
-    return runs.filter((r) => r.text.length);
   }
   return runs;
 }
