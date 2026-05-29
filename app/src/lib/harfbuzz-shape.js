@@ -71,13 +71,18 @@ function setParentRefs(node, parent) {
 // by fontSize / upem — using the font's *real* upem (Vazirmatn is 2048, not the
 // commonly-assumed 1000), otherwise glyphs come out ~2× too large.
 function makeRunShaper(hb, getHbFont, resolveFontUrl) {
-  return function shapeRun(text, fontSize, fontFamily, bold) {
+  return function shapeRun(text, fontSize, fontFamily, bold, rtl) {
     const url = resolveFontUrl(fontFamily, bold);
     if (!url) return Promise.resolve({ glyphs: [], advance: 0, scale: fontSize / 1000 });
     return getHbFont(url).then(({ font, upem }) => {
       const buffer = hb.createBuffer();
       buffer.addText(text);
-      buffer.guessSegmentProperties(); // direction/script/language from content
+      // Let HarfBuzz infer script/language from content, then pin the direction
+      // to the BiDi run's resolved level. Arabic-Indic digits (AN) inside an RTL
+      // paragraph form an LTR run; without this override, the script-based guess
+      // shapes the run RTL and reverses the digits (١٤٤٢ → ٢٤٤١).
+      buffer.guessSegmentProperties();
+      if (rtl !== undefined) buffer.setDirection(rtl ? 'rtl' : 'ltr');
       hb.shape(font, buffer);
       const glyphs = buffer.json();
       buffer.destroy();
@@ -154,7 +159,7 @@ export async function shapeSvgToVectorPaths(svgStr, { hb, getHbFont, fontConfig 
     const shaped = [];
     let totalW = 0;
     for (const run of runs) {
-      const r = await shapeRun(run.text, fontSize, fontFamily, bold);
+      const r = await shapeRun(run.text, fontSize, fontFamily, bold, run.rtl);
       shaped.push({ glyphs: r.glyphs, base: totalW, scale: r.scale, run });
       totalW += r.advance;
     }
